@@ -301,7 +301,7 @@ def chunked(items: List[object], size: int) -> Iterable[List[object]]:
 def format_optional_pct(value: object) -> str:
     if value is None or pd.isna(value):
         return "No games"
-    return f"{float(value):.3f}"
+    return f"{float(value) * 100:.1f}%"
 
 
 def format_optional_text(value: object, fallback: str = "No games") -> str:
@@ -327,7 +327,7 @@ def team_card_html(row: object) -> str:
             </div>
             <div class="team-metric">
                 <span>All-time Win%</span>
-                <strong>{row.win_pct:.3f}</strong>
+                <strong>{row.win_pct * 100:.1f}%</strong>
             </div>
             <div class="team-metric">
                 <span>Range record</span>
@@ -757,7 +757,7 @@ def main() -> None:
                 "GAME_DATE": "Last completed game",
             }
         )
-        table["Win %"] = table["Win %"].map(lambda value: f"{value:.3f}")
+        table["Win %"] = table["Win %"].map(lambda value: f"{value * 100:.1f}%")
         table["First game"] = table["First game"].dt.strftime("%Y-%m-%d")
         table["Last completed game"] = table["Last completed game"].dt.strftime("%Y-%m-%d")
         st.dataframe(table, use_container_width=True, hide_index=True)
