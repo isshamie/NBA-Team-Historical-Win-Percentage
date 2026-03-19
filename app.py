@@ -205,7 +205,7 @@ def apply_app_chrome() -> None:
 
         .team-metrics {
             display: grid;
-            grid-template-columns: repeat(3, 1fr);
+            grid-template-columns: repeat(2, 1fr);
             gap: 0.6rem;
             margin-top: 0.95rem;
         }
@@ -298,6 +298,18 @@ def chunked(items: List[object], size: int) -> Iterable[List[object]]:
         yield items[idx : idx + size]
 
 
+def format_optional_pct(value: object) -> str:
+    if value is None or pd.isna(value):
+        return "No games"
+    return f"{float(value):.3f}"
+
+
+def format_optional_text(value: object, fallback: str = "No games") -> str:
+    if value is None or pd.isna(value):
+        return fallback
+    return str(value)
+
+
 def team_card_html(row: object) -> str:
     return f"""
     <div class="team-card" style="--primary:{row.primary_color}; --secondary:{row.secondary_color};">
@@ -310,16 +322,20 @@ def team_card_html(row: object) -> str:
         </div>
         <div class="team-metrics">
             <div class="team-metric">
-                <span>Win%</span>
+                <span>Range Win%</span>
+                <strong>{format_optional_pct(getattr(row, "range_win_pct", None))}</strong>
+            </div>
+            <div class="team-metric">
+                <span>All-time Win%</span>
                 <strong>{row.win_pct:.3f}</strong>
             </div>
             <div class="team-metric">
-                <span>Record</span>
-                <strong>{html.escape(row.record)}</strong>
+                <span>Range record</span>
+                <strong>{html.escape(format_optional_text(getattr(row, "range_record", None)))}</strong>
             </div>
             <div class="team-metric">
-                <span>Last game</span>
-                <strong>{row.GAME_DATE.date()}</strong>
+                <span>All-time record</span>
+                <strong>{html.escape(row.record)}</strong>
             </div>
         </div>
     </div>
@@ -337,6 +353,42 @@ def render_team_cards(summary_df: pd.DataFrame) -> None:
         for column, row in zip(columns, row_group):
             with column:
                 st.markdown(team_card_html(row), unsafe_allow_html=True)
+
+
+def build_team_cards_summary(
+    all_time_summary_df: pd.DataFrame,
+    range_summary_df: pd.DataFrame,
+) -> pd.DataFrame:
+    if all_time_summary_df.empty:
+        return all_time_summary_df
+
+    merged = all_time_summary_df.copy()
+    range_fields = (
+        range_summary_df[
+            [
+                "entity_abbreviation",
+                "record",
+                "win_pct",
+                "GAME_DATE",
+            ]
+        ]
+        .rename(
+            columns={
+                "record": "range_record",
+                "win_pct": "range_win_pct",
+                "GAME_DATE": "range_last_game_date",
+            }
+        )
+        if not range_summary_df.empty
+        else pd.DataFrame(columns=["entity_abbreviation", "range_record", "range_win_pct", "range_last_game_date"])
+    )
+    merged = merged.merge(range_fields, on="entity_abbreviation", how="left")
+    merged["range_sort"] = merged["range_win_pct"].fillna(-1.0)
+    merged = merged.sort_values(
+        ["range_sort", "win_pct", "entity_abbreviation"],
+        ascending=[False, False, True],
+    ).drop(columns=["range_sort"])
+    return merged.reset_index(drop=True)
 
 
 def make_trace(team_df: pd.DataFrame, x_column: str, x_label: str) -> go.Scatter:
@@ -448,7 +500,7 @@ def ensure_season_range_state(source: str, season_labels: List[str]) -> tuple[st
     ):
         st.session_state[key] = default
     start, end = st.select_slider(
-        "Season range",
+        "Season range for chronology + selected teams",
         options=season_labels,
         value=tuple(st.session_state[key]),
         key=key,
@@ -653,18 +705,21 @@ def main() -> None:
         )
 
     st.markdown('<div class="section-kicker">Season chronology</div>', unsafe_allow_html=True)
-    st.caption("This view uses actual dates on the x-axis, with season labels at the first game of each season. The running win% is recomputed from the first game inside the selected season window.")
+    st.caption("This slider drives both the chronology chart and the selected-team cards below. The running win% is recomputed from the first game inside the selected season window.")
     chronology_df = filtered_df
+    cards_summary_df = summary_df
     if not filtered_df.empty:
         season_labels = ordered_season_labels(filtered_df)
         season_range = ensure_season_range_state(source, season_labels)
         chronology_df = recompute_window_cumulative_metrics(
             filter_df_to_season_range(filtered_df, season_range)
         )
+        cards_summary_df = build_team_cards_summary(summary_df, summarize_latest_results(chronology_df))
         st.plotly_chart(make_chronology_chart(chronology_df, selected_teams), use_container_width=True)
 
     st.markdown('<div class="section-kicker">Selected teams</div>', unsafe_allow_html=True)
-    render_team_cards(summary_df)
+    st.caption("Cards are sorted by the selected season range. Range Win% reflects only the active season window; All-time Win% remains the full franchise baseline.")
+    render_team_cards(cards_summary_df)
 
     st.markdown('<div class="section-kicker">Game progression</div>', unsafe_allow_html=True)
     st.caption("Hover a line directly to inspect that team only. The running win% is recomputed from the first game inside the selected game-number window.")
