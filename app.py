@@ -25,7 +25,7 @@ from nba_winpct_franchise import get_current_nba_teams, summarize_latest_results
 DEFAULT_START_MODE = "game1"
 DEFAULT_FRANCHISE_MODE = True
 CARD_COLUMNS = 4
-DEFAULT_SOURCE = NBA_API_SOURCE
+DEFAULT_SOURCE = BREF_SOURCE
 REFRESH_WORKFLOW_URL = "https://github.com/isshamie/NBA-Team-Historical-Win-Percentage/actions/workflows/refresh-data.yml"
 
 
@@ -553,6 +553,16 @@ def main() -> None:
     if not filtered_df.empty:
         st.plotly_chart(make_chronology_chart(filtered_df, selected_teams), use_container_width=True)
 
+    st.markdown('<div class="section-kicker">Selected teams</div>', unsafe_allow_html=True)
+    render_team_cards(summary_df)
+
+    st.markdown('<div class="section-kicker">Game progression</div>', unsafe_allow_html=True)
+    st.caption("Hover a line directly to inspect that team only. The tooltip follows the hovered trace rather than showing every team at the same x-position.")
+    if filtered_df.empty:
+        st.warning("Select at least one team to render the charts.")
+    else:
+        st.plotly_chart(make_game_number_chart(filtered_df, selected_teams), use_container_width=True)
+
     st.markdown('<div class="section-kicker">Latest record snapshot</div>', unsafe_allow_html=True)
     if summary_df.empty:
         st.info("No team summary available.")
@@ -581,16 +591,6 @@ def main() -> None:
         table["First game"] = table["First game"].dt.strftime("%Y-%m-%d")
         table["Last completed game"] = table["Last completed game"].dt.strftime("%Y-%m-%d")
         st.dataframe(table, use_container_width=True, hide_index=True)
-
-    st.markdown('<div class="section-kicker">Game progression</div>', unsafe_allow_html=True)
-    st.caption("Hover a line directly to inspect that team only. The tooltip follows the hovered trace rather than showing every team at the same x-position.")
-    if filtered_df.empty:
-        st.warning("Select at least one team to render the charts.")
-    else:
-        st.plotly_chart(make_game_number_chart(filtered_df, selected_teams), use_container_width=True)
-
-    st.markdown('<div class="section-kicker">Selected teams</div>', unsafe_allow_html=True)
-    render_team_cards(summary_df)
 
 
 if __name__ == "__main__":

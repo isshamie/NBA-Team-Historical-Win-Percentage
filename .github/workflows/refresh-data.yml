@@ -6,7 +6,7 @@ on:
       source_set:
         description: "Which published dataset(s) to refresh"
         required: true
-        default: "nba_api"
+        default: "basketball_reference"
         type: choice
         options:
           - nba_api
