@@ -1,0 +1,17 @@
+__pycache__/
+*.pyc
+.DS_Store
+.streamlit/secrets.toml
+
+bref_page_cache/
+nba_team_games_cache/
+
+backups/*
+!backups/.gitkeep
+
+outputs/*
+!outputs/README_outputs.txt
+!outputs/league_winpct_franchise_game1.parquet
+!outputs/bref_1947_2025_active_franchises_league_winpct_franchise_game1.parquet
+!outputs/nba_all_teams_winpct.png
+!outputs/nba_all_teams_winpct_basketball_reference.png
