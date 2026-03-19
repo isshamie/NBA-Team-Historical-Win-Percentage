@@ -421,6 +421,89 @@ def season_tick_frame(filtered_df: pd.DataFrame) -> pd.DataFrame:
     return ticks
 
 
+def ordered_season_labels(filtered_df: pd.DataFrame) -> List[str]:
+    if filtered_df.empty:
+        return []
+    return (
+        filtered_df.groupby("season_label", as_index=False)["GAME_DATE"]
+        .min()
+        .sort_values("GAME_DATE")
+        ["season_label"]
+        .tolist()
+    )
+
+
+def ensure_season_range_state(source: str, season_labels: List[str]) -> tuple[str, str] | None:
+    if not season_labels:
+        return None
+    key = f"season_range_{source}"
+    default = (season_labels[0], season_labels[-1])
+    current = st.session_state.get(key)
+    if (
+        not isinstance(current, (list, tuple))
+        or len(current) != 2
+        or current[0] not in season_labels
+        or current[1] not in season_labels
+        or season_labels.index(current[0]) > season_labels.index(current[1])
+    ):
+        st.session_state[key] = default
+    start, end = st.select_slider(
+        "Season range",
+        options=season_labels,
+        value=tuple(st.session_state[key]),
+        key=key,
+    )
+    return str(start), str(end)
+
+
+def filter_df_to_season_range(filtered_df: pd.DataFrame, season_range: tuple[str, str] | None) -> pd.DataFrame:
+    if filtered_df.empty or season_range is None:
+        return filtered_df
+    season_labels = ordered_season_labels(filtered_df)
+    if not season_labels:
+        return filtered_df
+    start, end = season_range
+    start_idx = season_labels.index(start)
+    end_idx = season_labels.index(end)
+    allowed = set(season_labels[start_idx : end_idx + 1])
+    return filtered_df[filtered_df["season_label"].isin(allowed)].copy()
+
+
+def ensure_game_range_state(source: str, filtered_df: pd.DataFrame) -> tuple[int, int] | None:
+    if filtered_df.empty:
+        return None
+    min_game = int(filtered_df["game_num_overall"].min())
+    max_game = int(filtered_df["game_num_overall"].max())
+    key = f"game_range_{source}"
+    default = (min_game, max_game)
+    current = st.session_state.get(key)
+    if (
+        not isinstance(current, (list, tuple))
+        or len(current) != 2
+        or int(current[0]) < min_game
+        or int(current[1]) > max_game
+        or int(current[0]) > int(current[1])
+    ):
+        st.session_state[key] = default
+    start, end = st.slider(
+        "Game number range",
+        min_value=min_game,
+        max_value=max_game,
+        value=tuple(int(v) for v in st.session_state[key]),
+        key=key,
+    )
+    return int(start), int(end)
+
+
+def filter_df_to_game_range(filtered_df: pd.DataFrame, game_range: tuple[int, int] | None) -> pd.DataFrame:
+    if filtered_df.empty or game_range is None:
+        return filtered_df
+    start, end = game_range
+    return filtered_df[
+        filtered_df["game_num_overall"].between(start, end, inclusive="both")
+    ].copy()
+
+
 def make_chronology_chart(filtered_df: pd.DataFrame, selected_teams: List[str]) -> go.Figure:
     fig = go.Figure()
     if filtered_df.empty:
@@ -550,18 +633,25 @@ def main() -> None:
 
     st.markdown('<div class="section-kicker">Season chronology</div>', unsafe_allow_html=True)
     st.caption("This view uses actual dates on the x-axis, with season labels at the first game of each season. Newer franchises start later, and all lines end on the same calendar timeline.")
+    chronology_df = filtered_df
     if not filtered_df.empty:
-        st.plotly_chart(make_chronology_chart(filtered_df, selected_teams), use_container_width=True)
+        season_labels = ordered_season_labels(filtered_df)
+        season_range = ensure_season_range_state(source, season_labels)
+        chronology_df = filter_df_to_season_range(filtered_df, season_range)
+        st.plotly_chart(make_chronology_chart(chronology_df, selected_teams), use_container_width=True)
 
     st.markdown('<div class="section-kicker">Selected teams</div>', unsafe_allow_html=True)
     render_team_cards(summary_df)
 
     st.markdown('<div class="section-kicker">Game progression</div>', unsafe_allow_html=True)
     st.caption("Hover a line directly to inspect that team only. The tooltip follows the hovered trace rather than showing every team at the same x-position.")
+    game_progression_df = filtered_df
     if filtered_df.empty:
         st.warning("Select at least one team to render the charts.")
     else:
-        st.plotly_chart(make_game_number_chart(filtered_df, selected_teams), use_container_width=True)
+        game_range = ensure_game_range_state(source, filtered_df)
+        game_progression_df = filter_df_to_game_range(filtered_df, game_range)
+        st.plotly_chart(make_game_number_chart(game_progression_df, selected_teams), use_container_width=True)
 
     st.markdown('<div class="section-kicker">Latest record snapshot</div>', unsafe_allow_html=True)
     if summary_df.empty:
