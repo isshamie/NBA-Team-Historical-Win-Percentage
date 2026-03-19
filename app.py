@@ -504,6 +504,27 @@ def filter_df_to_game_range(filtered_df: pd.DataFrame, game_range: tuple[int, in
     ].copy()
 
 
+def recompute_window_cumulative_metrics(filtered_df: pd.DataFrame) -> pd.DataFrame:
+    if filtered_df.empty:
+        return filtered_df.copy()
+
+    ordered = filtered_df.sort_values(
+        ["entity_abbreviation", "GAME_DATE", "game_num_overall", "GAME_ID"],
+        kind="mergesort",
+    ).copy()
+    grouped = ordered.groupby("entity_abbreviation", sort=False)
+    ordered["cum_wins"] = grouped["is_win"].cumsum()
+    ordered["cum_losses"] = grouped["is_loss"].cumsum()
+    totals = ordered["cum_wins"] + ordered["cum_losses"]
+    ordered["win_pct"] = ordered["cum_wins"] / totals.where(totals != 0, pd.NA)
+    ordered["wins_after_game"] = ordered["cum_wins"]
+    ordered["losses_after_game"] = ordered["cum_losses"]
+    ordered["win_pct_after_game"] = ordered["win_pct"]
+    ordered["computed_games_after_game"] = totals
+    ordered["game_number_matches_record"] = True
+    return ordered
+
+
 def make_chronology_chart(filtered_df: pd.DataFrame, selected_teams: List[str]) -> go.Figure:
     fig = go.Figure()
     if filtered_df.empty:
@@ -632,25 +653,29 @@ def main() -> None:
         )
 
     st.markdown('<div class="section-kicker">Season chronology</div>', unsafe_allow_html=True)
-    st.caption("This view uses actual dates on the x-axis, with season labels at the first game of each season. Newer franchises start later, and all lines end on the same calendar timeline.")
+    st.caption("This view uses actual dates on the x-axis, with season labels at the first game of each season. The running win% is recomputed from the first game inside the selected season window.")
     chronology_df = filtered_df
     if not filtered_df.empty:
         season_labels = ordered_season_labels(filtered_df)
         season_range = ensure_season_range_state(source, season_labels)
-        chronology_df = filter_df_to_season_range(filtered_df, season_range)
+        chronology_df = recompute_window_cumulative_metrics(
+            filter_df_to_season_range(filtered_df, season_range)
+        )
         st.plotly_chart(make_chronology_chart(chronology_df, selected_teams), use_container_width=True)
 
     st.markdown('<div class="section-kicker">Selected teams</div>', unsafe_allow_html=True)
     render_team_cards(summary_df)
 
     st.markdown('<div class="section-kicker">Game progression</div>', unsafe_allow_html=True)
-    st.caption("Hover a line directly to inspect that team only. The tooltip follows the hovered trace rather than showing every team at the same x-position.")
+    st.caption("Hover a line directly to inspect that team only. The running win% is recomputed from the first game inside the selected game-number window.")
     game_progression_df = filtered_df
     if filtered_df.empty:
         st.warning("Select at least one team to render the charts.")
     else:
         game_range = ensure_game_range_state(source, filtered_df)
-        game_progression_df = filter_df_to_game_range(filtered_df, game_range)
+        game_progression_df = recompute_window_cumulative_metrics(
+            filter_df_to_game_range(filtered_df, game_range)
+        )
         st.plotly_chart(make_game_number_chart(game_progression_df, selected_teams), use_container_width=True)
 
     st.markdown('<div class="section-kicker">Latest record snapshot</div>', unsafe_allow_html=True)
