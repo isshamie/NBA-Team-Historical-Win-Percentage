@@ -69,6 +69,7 @@ The app:
 - defaults to all 30 teams selected
 - lets you choose `NBA API` or `Basketball-Reference` as the active dataset source
 - lets you remove teams from the sidebar
+- supports `Desktop` and `Mobile` view modes, with mobile tabs and a 4-team chart cap for readability
 - starts from game 1 by default with no separate start-series toggle
 - colors each line with the team primary color
 - shows official NBA CDN logos in the team cards
@@ -80,7 +81,7 @@ The app:
 Use Streamlit Community Cloud for the public app. This repo is structured for that flow already:
 
 1. Push this repo to GitHub.
-2. In Streamlit Community Cloud, create a new app from `ishamie/NBA-Team-Historical-Win-Percentage`.
+2. In Streamlit Community Cloud, create a new app from `isshamie/NBA-Team-Historical-Win-Percentage`.
 3. Set the main file path to `app.py`.
 4. Deploy from the `main` branch.
 

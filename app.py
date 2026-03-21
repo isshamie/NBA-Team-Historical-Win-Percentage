@@ -24,7 +24,11 @@ from nba_winpct_franchise import get_current_nba_teams, summarize_latest_results
 
 DEFAULT_START_MODE = "game1"
 DEFAULT_FRANCHISE_MODE = True
-CARD_COLUMNS = 4
+DESKTOP_CARD_COLUMNS = 4
+MOBILE_CARD_COLUMNS = 1
+MOBILE_CHART_TEAM_LIMIT = 4
+DESKTOP_VIEW = "Desktop"
+MOBILE_VIEW = "Mobile"
 DEFAULT_SOURCE = BREF_SOURCE
 REFRESH_WORKFLOW_URL = "https://github.com/isshamie/NBA-Team-Historical-Win-Percentage/actions/workflows/refresh-data.yml"
 
@@ -34,7 +38,7 @@ def apply_app_chrome() -> None:
         page_title="NBA Franchise Win% Explorer",
         page_icon="🏀",
         layout="wide",
-        initial_sidebar_state="expanded",
+        initial_sidebar_state="auto",
     )
     st.markdown(
         """
@@ -46,6 +50,7 @@ def apply_app_chrome() -> None:
             --ink: #131313;
             --muted: #5f5a54;
             --line: rgba(19, 19, 19, 0.08);
+            --top-panel-offset: calc(4.5rem + env(safe-area-inset-top, 0px));
         }
 
         html, body, [class*="css"] {
@@ -59,11 +64,11 @@ def apply_app_chrome() -> None:
 
         [data-testid="stToolbar"] {
             right: 0.8rem;
-            top: 0.75rem;
+            top: 1rem;
         }
 
         .block-container {
-            padding-top: 1.35rem;
+            padding-top: var(--top-panel-offset);
             padding-bottom: 3rem;
         }
 
@@ -230,6 +235,98 @@ def apply_app_chrome() -> None:
             font-size: 0.96rem;
             color: var(--ink);
         }
+
+        .active-team-strip {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 0.55rem;
+            margin: 0.35rem 0 0.85rem;
+        }
+
+        .active-team-label {
+            font-family: "IBM Plex Mono", monospace;
+            font-size: 0.72rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--muted);
+        }
+
+        .active-team-pill {
+            display: inline-flex;
+            align-items: center;
+            min-height: 2rem;
+            padding: 0.35rem 0.72rem;
+            border-radius: 999px;
+            border: 1px solid color-mix(in srgb, var(--primary) 60%, white 40%);
+            background: color-mix(in srgb, var(--primary) 10%, white 90%);
+            color: var(--ink);
+            font-family: "IBM Plex Mono", monospace;
+            font-size: 0.78rem;
+            letter-spacing: 0.04em;
+        }
+
+        [data-testid="stTabs"] [data-baseweb="tab-list"] {
+            gap: 0.45rem;
+            flex-wrap: wrap;
+        }
+
+        [data-testid="stTabs"] [data-baseweb="tab"] {
+            border-radius: 999px;
+            background: rgba(255, 255, 255, 0.66);
+            border: 1px solid rgba(19, 19, 19, 0.08);
+            padding: 0.15rem 0.85rem;
+        }
+
+        @media (max-width: 900px) {
+            .hero {
+                padding: 1.15rem 1.2rem;
+                border-radius: 20px;
+            }
+
+            .meta-strip {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+
+            .team-card {
+                min-height: 0;
+            }
+        }
+
+        @media (max-width: 640px) {
+            .block-container {
+                padding-top: calc(4rem + env(safe-area-inset-top, 0px));
+                padding-bottom: 2rem;
+                padding-left: 0.8rem;
+                padding-right: 0.8rem;
+            }
+
+            .hero {
+                padding: 1rem;
+                border-radius: 18px;
+            }
+
+            .hero p {
+                font-size: 0.94rem;
+            }
+
+            .meta-strip {
+                grid-template-columns: 1fr;
+            }
+
+            .meta-pill {
+                padding: 0.8rem 0.9rem;
+            }
+
+            .team-card {
+                padding: 0.9rem;
+                border-radius: 18px;
+            }
+
+            .team-metrics {
+                grid-template-columns: 1fr;
+            }
+        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -244,6 +341,18 @@ def format_timestamp(path: str) -> str:
 
 def selection_state_key(source: str) -> str:
     return f"selected_teams_{source}"
+
+
+def season_range_state_key(source: str) -> str:
+    return f"season_range_{source}"
+
+
+def game_range_state_key(source: str) -> str:
+    return f"game_range_{source}"
+
+
+def chart_selection_state_key(source: str) -> str:
+    return f"chart_teams_{source}"
 
 
 def ensure_selection_state(source: str, all_teams: List[str]) -> str:
@@ -343,13 +452,17 @@ def team_card_html(row: object) -> str:
 
 
 def render_team_cards(summary_df: pd.DataFrame) -> None:
+    render_team_cards_with_columns(summary_df, DESKTOP_CARD_COLUMNS)
+
+
+def render_team_cards_with_columns(summary_df: pd.DataFrame, columns_per_row: int) -> None:
     if summary_df.empty:
         st.info("No teams selected.")
         return
 
     rows = list(summary_df.itertuples())
-    for row_group in chunked(rows, CARD_COLUMNS):
-        columns = st.columns(CARD_COLUMNS)
+    for row_group in chunked(rows, columns_per_row):
+        columns = st.columns(columns_per_row)
         for column, row in zip(columns, row_group):
             with column:
                 st.markdown(team_card_html(row), unsafe_allow_html=True)
@@ -391,7 +504,71 @@ def build_team_cards_summary(
     return merged.reset_index(drop=True)
 
 
-def make_trace(team_df: pd.DataFrame, x_column: str, x_label: str) -> go.Scatter:
+def ordered_team_options(summary_df: pd.DataFrame, selected_teams: List[str]) -> List[str]:
+    ordered: List[str] = []
+    if not summary_df.empty:
+        ordered.extend(summary_df["entity_abbreviation"].tolist())
+    for abbr in selected_teams:
+        if abbr not in ordered:
+            ordered.append(abbr)
+    return ordered
+
+
+def default_chart_teams(team_options: List[str]) -> List[str]:
+    return team_options[:MOBILE_CHART_TEAM_LIMIT]
+
+
+def ensure_chart_selection_state(source: str, team_options: List[str]) -> str:
+    key = chart_selection_state_key(source)
+    default = default_chart_teams(team_options)
+    current = st.session_state.get(key)
+    current_list = list(current) if isinstance(current, (list, tuple)) else []
+    selected = (
+        [team for team in current if team in team_options][:MOBILE_CHART_TEAM_LIMIT]
+        if isinstance(current, (list, tuple))
+        else []
+    )
+    if key not in st.session_state:
+        st.session_state[key] = default
+    elif selected != current_list:
+        st.session_state[key] = selected
+    elif not selected and default:
+        st.session_state[key] = default
+    return key
+
+
+def render_active_team_pills(summary_df: pd.DataFrame, active_teams: List[str]) -> None:
+    if not active_teams:
+        return
+
+    summary_lookup = (
+        summary_df.drop_duplicates("entity_abbreviation")
+        .set_index("entity_abbreviation")
+        if not summary_df.empty
+        else pd.DataFrame()
+    )
+    pills: List[str] = []
+    for abbr in active_teams:
+        if not summary_lookup.empty and abbr in summary_lookup.index:
+            row = summary_lookup.loc[abbr]
+            primary_color = row["primary_color"]
+            entity_name = row["entity_name"]
+        else:
+            primary_color = "#131313"
+            entity_name = abbr
+        pills.append(
+            f'<span class="active-team-pill" style="--primary:{primary_color};" title="{html.escape(str(entity_name))}">'
+            f"{html.escape(abbr)}</span>"
+        )
+    st.markdown(
+        '<div class="active-team-strip"><span class="active-team-label">Chart teams</span>'
+        + "".join(pills)
+        + "</div>",
+        unsafe_allow_html=True,
+    )
+
+
+def make_trace(team_df: pd.DataFrame, x_column: str, x_label: str, line_width: float) -> go.Scatter:
     team_color = team_df["primary_color"].iloc[0]
     secondary_color = team_df["secondary_color"].iloc[0]
     abbr = team_df["entity_abbreviation"].iloc[0]
@@ -400,7 +577,7 @@ def make_trace(team_df: pd.DataFrame, x_column: str, x_label: str) -> go.Scatter
         y=team_df["win_pct"],
         mode="lines",
         name=abbr,
-        line={"color": team_color, "width": 2.4},
+        line={"color": team_color, "width": line_width},
         opacity=0.9,
         hoverlabel={
             "bgcolor": "rgba(255,255,255,0.96)",
@@ -421,14 +598,18 @@ def make_trace(team_df: pd.DataFrame, x_column: str, x_label: str) -> go.Scatter
     )
 
 
-def apply_base_chart_layout(fig: go.Figure, xaxis_title: str) -> None:
+def apply_base_chart_layout(fig: go.Figure, xaxis_title: str, view_mode: str) -> None:
+    is_mobile = view_mode == MOBILE_VIEW
     fig.add_hline(y=0.5, line_dash="dot", line_color="rgba(19,19,19,0.22)")
     fig.update_layout(
-        height=720,
-        margin={"l": 24, "r": 24, "t": 42, "b": 20},
+        height=460 if is_mobile else 720,
+        margin={"l": 14, "r": 14, "t": 34, "b": 12}
+        if is_mobile
+        else {"l": 24, "r": 24, "t": 42, "b": 20},
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(255,255,255,0.82)",
         font={"family": "Space Grotesk, sans-serif", "color": "#131313"},
+        showlegend=not is_mobile,
         legend={
             "orientation": "v",
             "x": 1.02,
@@ -443,32 +624,39 @@ def apply_base_chart_layout(fig: go.Figure, xaxis_title: str) -> None:
         yaxis_title="Cumulative winning percentage",
         yaxis={"range": [0, 1], "tickformat": ".0%"},
     )
+    fig.update_xaxes(automargin=True, nticks=6 if is_mobile else None)
+    fig.update_yaxes(automargin=True)
 
 
-def make_game_number_chart(filtered_df: pd.DataFrame, selected_teams: List[str]) -> go.Figure:
+def make_game_number_chart(
+    filtered_df: pd.DataFrame,
+    selected_teams: List[str],
+    view_mode: str,
+) -> go.Figure:
     fig = go.Figure()
     if filtered_df.empty:
         return fig
 
+    line_width = 3.2 if view_mode == MOBILE_VIEW else 2.4
     for abbr in selected_teams:
         team_df = filtered_df[filtered_df["entity_abbreviation"] == abbr].copy()
         if team_df.empty:
             continue
-        fig.add_trace(make_trace(team_df, "game_num_overall", "Game"))
+        fig.add_trace(make_trace(team_df, "game_num_overall", "Game", line_width))
 
-    apply_base_chart_layout(fig, "Game number (chronological)")
+    apply_base_chart_layout(fig, "Game number (chronological)", view_mode)
     return fig
 
 
-def season_tick_frame(filtered_df: pd.DataFrame) -> pd.DataFrame:
+def season_tick_frame(filtered_df: pd.DataFrame, max_ticks: int) -> pd.DataFrame:
     ticks = (
         filtered_df.groupby("season_label", as_index=False)["GAME_DATE"]
         .min()
         .sort_values("GAME_DATE")
         .reset_index(drop=True)
     )
-    if len(ticks) > 24:
-        step = math.ceil(len(ticks) / 24)
+    if len(ticks) > max_ticks:
+        step = math.ceil(len(ticks) / max_ticks)
         ticks = ticks.iloc[::step].reset_index(drop=True)
     return ticks
 
@@ -485,10 +673,10 @@ def ordered_season_labels(filtered_df: pd.DataFrame) -> List[str]:
     )
 
 
-def ensure_season_range_state(source: str, season_labels: List[str]) -> tuple[str, str] | None:
+def normalize_season_range_state(source: str, season_labels: List[str]) -> tuple[str, str] | None:
     if not season_labels:
         return None
-    key = f"season_range_{source}"
+    key = season_range_state_key(source)
     default = (season_labels[0], season_labels[-1])
     current = st.session_state.get(key)
     if (
@@ -499,10 +687,18 @@ def ensure_season_range_state(source: str, season_labels: List[str]) -> tuple[st
         or season_labels.index(current[0]) > season_labels.index(current[1])
     ):
         st.session_state[key] = default
+    return str(st.session_state[key][0]), str(st.session_state[key][1])
+
+
+def render_season_range_control(source: str, season_labels: List[str]) -> tuple[str, str] | None:
+    current = normalize_season_range_state(source, season_labels)
+    if current is None:
+        return None
+    key = season_range_state_key(source)
     start, end = st.select_slider(
         "Season range for chronology + selected teams",
         options=season_labels,
-        value=tuple(st.session_state[key]),
+        value=current,
         key=key,
     )
     return str(start), str(end)
@@ -521,12 +717,12 @@ def filter_df_to_season_range(filtered_df: pd.DataFrame, season_range: tuple[str
     return filtered_df[filtered_df["season_label"].isin(allowed)].copy()
 
 
-def ensure_game_range_state(source: str, filtered_df: pd.DataFrame) -> tuple[int, int] | None:
+def normalize_game_range_state(source: str, filtered_df: pd.DataFrame) -> tuple[int, int] | None:
     if filtered_df.empty:
         return None
     min_game = int(filtered_df["game_num_overall"].min())
     max_game = int(filtered_df["game_num_overall"].max())
-    key = f"game_range_{source}"
+    key = game_range_state_key(source)
     default = (min_game, max_game)
     current = st.session_state.get(key)
     if (
@@ -537,11 +733,21 @@ def ensure_game_range_state(source: str, filtered_df: pd.DataFrame) -> tuple[int
         or int(current[0]) > int(current[1])
     ):
         st.session_state[key] = default
+    return int(st.session_state[key][0]), int(st.session_state[key][1])
+
+
+def render_game_range_control(source: str, filtered_df: pd.DataFrame) -> tuple[int, int] | None:
+    current = normalize_game_range_state(source, filtered_df)
+    if current is None:
+        return None
+    min_game = int(filtered_df["game_num_overall"].min())
+    max_game = int(filtered_df["game_num_overall"].max())
+    key = game_range_state_key(source)
     start, end = st.slider(
         "Game number range",
         min_value=min_game,
         max_value=max_game,
-        value=tuple(int(v) for v in st.session_state[key]),
+        value=current,
         key=key,
     )
     return int(start), int(end)
@@ -577,26 +783,64 @@ def recompute_window_cumulative_metrics(filtered_df: pd.DataFrame) -> pd.DataFra
     return ordered
 
 
-def make_chronology_chart(filtered_df: pd.DataFrame, selected_teams: List[str]) -> go.Figure:
+def make_chronology_chart(
+    filtered_df: pd.DataFrame,
+    selected_teams: List[str],
+    view_mode: str,
+) -> go.Figure:
     fig = go.Figure()
     if filtered_df.empty:
         return fig
 
+    line_width = 3.2 if view_mode == MOBILE_VIEW else 2.4
     for abbr in selected_teams:
         team_df = filtered_df[filtered_df["entity_abbreviation"] == abbr].copy()
         if team_df.empty:
             continue
-        fig.add_trace(make_trace(team_df, "GAME_DATE", "Date"))
+        fig.add_trace(make_trace(team_df, "GAME_DATE", "Date", line_width))
 
-    ticks = season_tick_frame(filtered_df)
-    apply_base_chart_layout(fig, "Season chronology")
+    max_ticks = 8 if view_mode == MOBILE_VIEW else 24
+    ticks = season_tick_frame(filtered_df, max_ticks=max_ticks)
+    apply_base_chart_layout(fig, "Season chronology", view_mode)
     fig.update_xaxes(
         tickmode="array",
         tickvals=ticks["GAME_DATE"],
         ticktext=ticks["season_label"],
-        tickangle=-45,
+        tickangle=0 if view_mode == MOBILE_VIEW else -45,
+        tickfont={"size": 10 if view_mode == MOBILE_VIEW else 12},
     )
     return fig
+
+
+def render_snapshot_table(summary_df: pd.DataFrame) -> None:
+    if summary_df.empty:
+        st.info("No team summary available.")
+        return
+
+    table = summary_df[
+        [
+            "entity_abbreviation",
+            "entity_name",
+            "record",
+            "win_pct",
+            "first_game_date",
+            "GAME_DATE",
+        ]
+    ].copy()
+    table = table.rename(
+        columns={
+            "entity_abbreviation": "Team",
+            "entity_name": "Name",
+            "record": "Record",
+            "win_pct": "Win %",
+            "first_game_date": "First game",
+            "GAME_DATE": "Last completed game",
+        }
+    )
+    table["Win %"] = table["Win %"].map(lambda value: f"{value * 100:.1f}%")
+    table["First game"] = table["First game"].dt.strftime("%Y-%m-%d")
+    table["Last completed game"] = table["Last completed game"].dt.strftime("%Y-%m-%d")
+    st.dataframe(table, use_container_width=True, hide_index=True)
 
 
 def main() -> None:
@@ -613,6 +857,13 @@ def main() -> None:
         index=list_sources().index(DEFAULT_SOURCE),
         format_func=source_label,
         help="Choose which historical data source powers the charts and tables.",
+    )
+    view_mode = st.sidebar.radio(
+        "View mode",
+        options=[DESKTOP_VIEW, MOBILE_VIEW],
+        index=0,
+        key="view_mode",
+        help="Mobile mode keeps charts focused and reorganizes the page into tabs.",
     )
     selected_key = ensure_selection_state(source, team_options)
 
@@ -652,6 +903,19 @@ def main() -> None:
     selected_teams = st.session_state[selected_key]
     filtered_df = dataset[dataset["entity_abbreviation"].isin(selected_teams)].copy()
     summary_df = summarize_latest_results(filtered_df)
+    season_labels = ordered_season_labels(filtered_df)
+    season_range = normalize_season_range_state(source, season_labels)
+    chronology_df = recompute_window_cumulative_metrics(
+        filter_df_to_season_range(filtered_df, season_range)
+    )
+    cards_summary_df = build_team_cards_summary(
+        summary_df,
+        summarize_latest_results(chronology_df),
+    )
+    game_range = normalize_game_range_state(source, filtered_df)
+    game_progression_df = recompute_window_cumulative_metrics(
+        filter_df_to_game_range(filtered_df, game_range)
+    )
     selected_count = len(summary_df)
     latest_date = (
         summary_df["GAME_DATE"].max().date().isoformat() if not summary_df.empty else "n/a"
@@ -704,63 +968,94 @@ def main() -> None:
             "That usually means the scrape failed or the source rate-limited the build."
         )
 
-    st.markdown('<div class="section-kicker">Season chronology</div>', unsafe_allow_html=True)
-    st.caption("This slider drives both the chronology chart and the selected-team cards below. The running win% is recomputed from the first game inside the selected season window.")
-    chronology_df = filtered_df
-    cards_summary_df = summary_df
-    if not filtered_df.empty:
-        season_labels = ordered_season_labels(filtered_df)
-        season_range = ensure_season_range_state(source, season_labels)
-        chronology_df = recompute_window_cumulative_metrics(
-            filter_df_to_season_range(filtered_df, season_range)
+    chart_team_options = ordered_team_options(cards_summary_df, selected_teams)
+    mobile_chart_key: str | None = None
+    if view_mode == MOBILE_VIEW and chart_team_options:
+        st.markdown('<div class="section-kicker">Chart teams</div>', unsafe_allow_html=True)
+        st.caption("Mobile charts stay readable with up to four lines. The default follows the current season-range card order.")
+        mobile_chart_key = ensure_chart_selection_state(source, chart_team_options)
+        st.multiselect(
+            "Chart teams",
+            options=chart_team_options,
+            key=mobile_chart_key,
+            max_selections=MOBILE_CHART_TEAM_LIMIT,
+            format_func=lambda abbr: f"{abbr} | {team_name_map[abbr]}",
+            help="Choose up to four teams for the mobile charts.",
         )
-        cards_summary_df = build_team_cards_summary(summary_df, summarize_latest_results(chronology_df))
-        st.plotly_chart(make_chronology_chart(chronology_df, selected_teams), use_container_width=True)
+    active_chart_teams = (
+        st.session_state[mobile_chart_key]
+        if mobile_chart_key is not None
+        else selected_teams
+    )
 
-    st.markdown('<div class="section-kicker">Selected teams</div>', unsafe_allow_html=True)
-    st.caption("Cards are sorted by the selected season range. Range Win% reflects only the active season window; All-time Win% remains the full franchise baseline.")
-    render_team_cards(cards_summary_df)
+    if view_mode == MOBILE_VIEW:
+        chronology_tab, progression_tab, teams_tab, snapshot_tab = st.tabs(
+            ["Chronology", "Game progression", "Teams", "Snapshot"]
+        )
 
-    st.markdown('<div class="section-kicker">Game progression</div>', unsafe_allow_html=True)
-    st.caption("Hover a line directly to inspect that team only. The running win% is recomputed from the first game inside the selected game-number window.")
-    game_progression_df = filtered_df
-    if filtered_df.empty:
-        st.warning("Select at least one team to render the charts.")
+        with chronology_tab:
+            st.caption("The season range also drives the team-card ordering below.")
+            with st.expander("Filters", expanded=False):
+                render_season_range_control(source, season_labels)
+            if filtered_df.empty:
+                st.warning("Select at least one team to render the charts.")
+            elif not active_chart_teams:
+                st.warning("Choose at least one chart team for mobile mode.")
+            else:
+                render_active_team_pills(cards_summary_df, active_chart_teams)
+                st.plotly_chart(
+                    make_chronology_chart(chronology_df, active_chart_teams, view_mode),
+                    use_container_width=True,
+                )
+
+        with progression_tab:
+            st.caption("The running win% is recomputed from the first game inside the selected game-number window.")
+            with st.expander("Filters", expanded=False):
+                render_game_range_control(source, filtered_df)
+            if filtered_df.empty:
+                st.warning("Select at least one team to render the charts.")
+            elif not active_chart_teams:
+                st.warning("Choose at least one chart team for mobile mode.")
+            else:
+                render_active_team_pills(cards_summary_df, active_chart_teams)
+                st.plotly_chart(
+                    make_game_number_chart(game_progression_df, active_chart_teams, view_mode),
+                    use_container_width=True,
+                )
+
+        with teams_tab:
+            st.caption("Cards are sorted by the selected season range. Range Win% reflects only the active window; All-time Win% stays unchanged.")
+            render_team_cards_with_columns(cards_summary_df, MOBILE_CARD_COLUMNS)
+
+        with snapshot_tab:
+            render_snapshot_table(summary_df)
     else:
-        game_range = ensure_game_range_state(source, filtered_df)
-        game_progression_df = recompute_window_cumulative_metrics(
-            filter_df_to_game_range(filtered_df, game_range)
-        )
-        st.plotly_chart(make_game_number_chart(game_progression_df, selected_teams), use_container_width=True)
+        st.markdown('<div class="section-kicker">Season chronology</div>', unsafe_allow_html=True)
+        st.caption("This slider drives both the chronology chart and the selected-team cards below. The running win% is recomputed from the first game inside the selected season window.")
+        if not filtered_df.empty:
+            render_season_range_control(source, season_labels)
+            st.plotly_chart(
+                make_chronology_chart(chronology_df, active_chart_teams, view_mode),
+                use_container_width=True,
+            )
 
-    st.markdown('<div class="section-kicker">Latest record snapshot</div>', unsafe_allow_html=True)
-    if summary_df.empty:
-        st.info("No team summary available.")
-    else:
-        table = summary_df[
-            [
-                "entity_abbreviation",
-                "entity_name",
-                "record",
-                "win_pct",
-                "first_game_date",
-                "GAME_DATE",
-            ]
-        ].copy()
-        table = table.rename(
-            columns={
-                "entity_abbreviation": "Team",
-                "entity_name": "Name",
-                "record": "Record",
-                "win_pct": "Win %",
-                "first_game_date": "First game",
-                "GAME_DATE": "Last completed game",
-            }
-        )
-        table["Win %"] = table["Win %"].map(lambda value: f"{value * 100:.1f}%")
-        table["First game"] = table["First game"].dt.strftime("%Y-%m-%d")
-        table["Last completed game"] = table["Last completed game"].dt.strftime("%Y-%m-%d")
-        st.dataframe(table, use_container_width=True, hide_index=True)
+        st.markdown('<div class="section-kicker">Selected teams</div>', unsafe_allow_html=True)
+        st.caption("Cards are sorted by the selected season range. Range Win% reflects only the active season window; All-time Win% remains the full franchise baseline.")
+        render_team_cards_with_columns(cards_summary_df, DESKTOP_CARD_COLUMNS)
+
+        st.markdown('<div class="section-kicker">Game progression</div>', unsafe_allow_html=True)
+        st.caption("Hover a line directly to inspect that team only. The running win% is recomputed from the first game inside the selected game-number window.")
+        if filtered_df.empty:
+            st.warning("Select at least one team to render the charts.")
+        else:
+            render_game_range_control(source, filtered_df)
+            st.plotly_chart(
+                make_game_number_chart(game_progression_df, active_chart_teams, view_mode),
+                use_container_width=True,
+            )
+
+        st.markdown('<div class="section-kicker">Latest record snapshot</div>', unsafe_allow_html=True)
+        render_snapshot_table(summary_df)
 
 
 if __name__ == "__main__":
